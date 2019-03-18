@@ -15,6 +15,8 @@ import glob
 import os
 import cv2 
 from tensorflow.keras.utils import to_categorical
+from tensorflow.compat.v1 import ConfigProto
+from tensorflow.compat.v1 import InteractiveSession
 
 provNum, alphaNum, adNum = 38, 25, 35
 provinces = ["皖", "沪", "津", "渝", "冀", "晋", "蒙", "辽", "吉", "黑", "苏", "浙", "京", "闽", "赣", "鲁", "豫", "鄂", "湘", "粤", "桂",
@@ -27,6 +29,8 @@ img_origin_width = 720
 img_origin_height = 1160
 img_origin_channel = 3
 
+train_size = 6000 
+load_size = 10000
 
 def buildLabel(img_path):
 	#([x,y,w,h], [y0, y1, y2, y3, y4, y5, y6])
@@ -71,7 +75,7 @@ def loadData(store_path = 'ccpd_dataset/ccpd_base/'):
 	counter = 0
 
 	for img_path in glob.glob( store_path + '*.jpg'):
-		if counter > 5000:
+		if counter >= load_size:
 			break
 		img_array = cv2.imread( img_path )
 		img_array = cv2.resize( img_array, (180, 290))
@@ -106,10 +110,28 @@ def loadData(store_path = 'ccpd_dataset/ccpd_base/'):
 	# print(img_label)
 	return img_list, box_labels, labels_0, labels_1, labels_2, labels_3, labels_4, labels_5, labels_6
 
+def loadCarData(label_path='cars-dataset/' ,store_path='cars_train/'):
+	has_label =[]
+
+
+
 if __name__ == '__main__':
 	img_data, box_labels, labels_0, labels_1, labels_2, labels_3, labels_4, labels_5, labels_6 = loadData()
+	train_data, train_box_labels, train_labels_0, train_labels_1, train_labels_2, train_labels_3, train_labels_4, train_labels_5, train_labels_6, \
+	test_data, test_box_labels, test_labels_0, test_labels_1, test_labels_2, test_labels_3, test_labels_4, test_labels_5, test_labels_6 \
+	= img_data[0:train_size], box_labels[0:train_size], labels_0[0:train_size], labels_1[0:train_size], labels_2[0:train_size], labels_3[0:train_size], labels_4[0:train_size], labels_5[0:train_size], labels_6[0:train_size], img_data[train_size:load_size], box_labels[train_size:load_size], labels_0[train_size:load_size], labels_1[train_size:load_size], labels_2[train_size:load_size], labels_3[train_size:load_size], labels_4[train_size:load_size], labels_5[train_size:load_size], labels_6[train_size:load_size]
+		
 
-	with tf.Session() as sess:
+	config = ConfigProto()
+	config.gpu_options.allow_growth = True
+	#session = InteractiveSession(config=config)
+
+	with tf.Session(config=config) as sess:
+
 		tf.set_random_seed(1)
+		RLPRnet = model.loadModel()
+		if RLPRnet == None:
+			RLPRnet = model.trainModel(train_data, train_box_labels, train_labels_0, train_labels_1, train_labels_2, train_labels_3, train_labels_4, train_labels_5, train_labels_6)
 
-		RLPRnet = model.trainModel(img_data, box_labels, labels_0, labels_1, labels_2, labels_3, labels_4, labels_5, labels_6)
+		pred = 	RLPRnet.predict(img_data[0])
+		print(pred)	

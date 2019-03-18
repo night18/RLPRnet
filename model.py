@@ -12,17 +12,20 @@ Change logs
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.models import Model, save_model, load_model
-from tensorflow.keras.layers import Input, Conv2D, Activation, concatenate, MaxPool2D, Flatten, Dense, BatchNormalization, ZeroPadding2D
+from tensorflow.keras.layers import Input, Conv2D, Activation, concatenate, MaxPool2D, Flatten, Dense, BatchNormalization, ZeroPadding2D, Dropout
 import tensorflow.keras.backend as K
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint
 from tensorflow.python.keras.layers import Lambda
 from pprint import pprint
+import pickle
+
 
 models_dir = "models"
 history_dir = "history"
 checkpoint_dir = "checkpoint"
 box_in_x =None
+dropout_rate = 0.5
 
 def shortcutModule(pre_lyr, output_channels, res_id, is_stride = True):
 	if is_stride:
@@ -39,6 +42,7 @@ def shortcutModule(pre_lyr, output_channels, res_id, is_stride = True):
 def myResModule(pre_lyr, kernel_length, first_channels, second_channels, res_id):
 	x = Conv2D(first_channels, kernel_size=(kernel_length,kernel_length), strides=(2,2) ,padding='same', name=res_id+'_conv_1' )(pre_lyr)
 	x = BatchNormalization(name=res_id+'_batch_1')(x)
+	x = Dropout(dropout_rate, name=res_id+'_dropout_1')(x)
 	x = Activation('relu', name=res_id+'_relu_1')(x)
 
 	x = Conv2D(second_channels, kernel_size=(kernel_length,kernel_length), strides=(1,1), padding='same', name=res_id+'_conv_2')(x)
@@ -46,6 +50,7 @@ def myResModule(pre_lyr, kernel_length, first_channels, second_channels, res_id)
 
 	shortcut = shortcutModule(pre_lyr, second_channels, res_id)
 	x = concatenate([x, shortcut], name=res_id+'_conc')
+	x = Dropout(dropout_rate, name=res_id+'_dropout_2')(x)
 	x = Activation('relu', name=res_id+"_relu_2")(x)
 	return x
 
@@ -80,12 +85,13 @@ def RLPRnet(imput_img, input_width = 180, input_height = 290): #TODO make width 
 	x = Conv2D(64, kernel_size=(7,7), strides=(2,2) ,padding='same', name= '0_conv_1' )(inputs)
 	x = myResModule(x, 5, 64, 128, "1")
 	x = myResModule(x, 5, 128, 192, "2")
-	x = myResModule(x, 5, 192, 192, "3")
+	# x = myResModule(x, 5, 192, 192, "3")
 
 	# Box location
-	box = Conv2D(192, kernel_size=(3,3), strides=(2,2), padding='same', name = 'box_conv_1')(x)
-	box = Conv2D(192, kernel_size=(3,3), strides=(1,1), padding='same', name = 'box_conv_2')(box)
-	box = Flatten()(box)
+	x = myResModule(x, 3, 192, 192, "box")
+	# box = Conv2D(192, kernel_size=(3,3), strides=(2,2), padding='same', name = 'box_conv_1')(x)
+	# box = Conv2D(192, kernel_size=(3,3), strides=(1,1), padding='same', name = 'box_conv_2')(box)
+	box = Flatten()(x)
 	box = Dense(100, activation = 'relu', name='box_fc_1')(box)
 	box = Dense(100, activation = 'relu', name='box_fc_2')(box)
 	# x, y, w, h
@@ -109,19 +115,20 @@ def RLPRnet(imput_img, input_width = 180, input_height = 290): #TODO make width 
 	# pr = Conv2D(192, kernel_size=(3,3), strides=(2,2), padding='same', name = 'box_conv_1')(x)
 	# pr = Conv2D(192, kernel_size=(3,3), strides=(1,1), padding='same', name = 'box_conv_1')(pr)
 
-	y0 = charClassifier(roi,38 ,"0")
-	y1 = charClassifier(roi,25 ,"1")
+	# y0 = charClassifier(roi,38 ,"0")
+	# y1 = charClassifier(roi,25 ,"1")
 	y2 = charClassifier(roi,35 ,"2")
 	y3 = charClassifier(roi,35 ,"3")
 	y4 = charClassifier(roi,35 ,"4")
 	y5 = charClassifier(roi,35 ,"5")
 	y6 = charClassifier(roi,35 ,"6")
 
-	outputs = concatenate([box_output, y0, y1, y2, y3, y4, y5, y6],axis=1, name='final_output')
+	# outputs = concatenate([box_output, y0, y1, y2, y3, y4, y5, y6],axis=1, name='final_output')
 
 	model = Model(
 		inputs = inputs,
-		outputs = [box_output, y0, y1, y2, y3, y4, y5, y6], #tuple
+		# outputs = [box_output, y0, y1, y2, y3, y4, y5, y6], #tuple
+		outputs = [box_output, y2, y3, y4, y5, y6], #tuple
 		name = 'RLPRnet'
 		)
 	return model
@@ -164,7 +171,15 @@ def customLoss(yTrue, yPred):
 # 				bbox_loss += 0.5 * (x - yPred[idx])**2
 # 	return 
 
-def trainModel(train_data, box_labels, labels_0, labels_1, labels_2, labels_3, labels_4, labels_5, labels_6, epochs=25, learning_rate=0.00001):
+#Custom metric
+# def IOUmetric(y_true, y_pred):
+# 	# [x,y,w,h]
+# 	union = (y_pred[0]-y_pred[2]) - (y_true[0] + y_true[1])
+
+# 	print(y_true)
+# 	return K.cast(0, 'int32')
+
+def trainModel(train_data, box_labels, labels_0, labels_1, labels_2, labels_3, labels_4, labels_5, labels_6, epochs=100, learning_rate=0.001):
 	model = None
 	h5_storage_path = models_dir + "/" + "RLPRnet_" + str(learning_rate) + ".h5"
 	hist_storage_path = history_dir + "/" + "RLPRnet_" + str(learning_rate)
@@ -173,8 +188,8 @@ def trainModel(train_data, box_labels, labels_0, labels_1, labels_2, labels_3, l
 	model = RLPRnet(train_data)
 	losses = {
 		"box_classifier": "mse", 
-		"0_cls_output": "categorical_crossentropy",
-		"1_cls_output": "categorical_crossentropy",
+		# "0_cls_output": "categorical_crossentropy",
+		# "1_cls_output": "categorical_crossentropy",
 		"2_cls_output": "categorical_crossentropy",
 		"3_cls_output": "categorical_crossentropy",
 		"4_cls_output": "categorical_crossentropy",
@@ -184,20 +199,20 @@ def trainModel(train_data, box_labels, labels_0, labels_1, labels_2, labels_3, l
 
 	loss_weights = {
 		"box_classifier": 0.5, 
-		"0_cls_output": 0.1,
-		"1_cls_output": 0.1,
-		"2_cls_output": 0.1,
-		"3_cls_output": 0.1,
-		"4_cls_output": 0.1,
-		"5_cls_output": 0.1,
-		"6_cls_output": 0.1,
+		# "0_cls_output": 0.1,
+		# "1_cls_output": 0.1,
+		"2_cls_output": 1,
+		"3_cls_output": 1,
+		"4_cls_output": 1,
+		"5_cls_output": 1,
+		"6_cls_output": 1,
 	}
 	#TODO metrics
 	model.compile(
 		loss = losses,
 		loss_weights=loss_weights,
 		optimizer = Adam(lr=learning_rate),
-		metrics = ['accuracy']
+		metrics = ["accuracy"]
 	)
 
 	checkpoint = ModelCheckpoint(checkpoint_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
@@ -208,8 +223,8 @@ def trainModel(train_data, box_labels, labels_0, labels_1, labels_2, labels_3, l
 		train_data,
 		{
 		"box_classifier": box_labels,
-		"0_cls_output": labels_0,
-		"1_cls_output": labels_1,
+		# "0_cls_output": labels_0,
+		# "1_cls_output": labels_1,
 		"2_cls_output": labels_2,
 		"3_cls_output": labels_3,
 		"4_cls_output": labels_4,
@@ -217,7 +232,7 @@ def trainModel(train_data, box_labels, labels_0, labels_1, labels_2, labels_3, l
 		"6_cls_output": labels_6,
 		},
 		epochs = epochs,
-		batch_size = 8,
+		batch_size = 32,
 		validation_split = 0.3,
 		callbacks=callbacks_list,
 		verbose= 1)
@@ -237,3 +252,20 @@ def trainModel(train_data, box_labels, labels_0, labels_1, labels_2, labels_3, l
 	print("Successfully save the model at " + h5_storage_path)
 
 	return model
+
+
+def loadModel(learning_rate = 0.001):
+	h5_storage_path = models_dir + "/" + "RLPRnet_" + str(learning_rate) + ".h5"
+	
+	try:
+		model = load_model(
+			h5_storage_path,
+			custom_objects=None,
+			compile=True
+		)
+
+	except Exception as e:
+		model = None
+		print(e)
+	finally:
+		return model
